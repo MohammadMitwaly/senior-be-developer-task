@@ -14,8 +14,50 @@ This makes sure that no 2 workers are processing the same key in parallel
 The more complete fix:
 - In the actual `Queue.ts` I have the cleaner approach, where it is the same concept as the first fix, but we utilize the `workerId` when saving the messages currently being process, so that in the "Confirm" flow we can validate if the current `workerN` attempting to relase the lock is authorized to do so
 
+- An even more complete fix would probably maintain two maps an a First-In-First-Out that is per key, something like this, but I did not want to over engineer so adding it here in gist:
+```ts
+export class Queue {
+    private messages: Message[] = [];
+    private messageOwnerMap: Map<string, number> = new Map();
+    private beingProccessed: Map<string, InFlight> = new Map();
+
+    Enqueue = (message: Message) => {
+        this.messages.push(message);
+    };
+
+    Dequeue = (workerId: number): Message | undefined => {
+        for (let i = 0; i < this.messages.length; i++) {
+            const msg = this.messages[i];
+            if (!this.messageOwnerMap.has(msg.key)) {
+                this.messages.splice(i, 1);
+                this.messageOwnerMap.set(msg.key, workerId);
+                this.beingProccessed.set(msg.id, { message: msg, workerId });
+                return msg;
+            }
+        }
+        return undefined;
+    };
+
+    Confirm = (workerId: number, messageId: string) => {
+        const key = currentMsg.message.key;
+        if (this.messageOwnerMap.get(key) === workerId) {
+            this.messageOwnerMap.delete(key);
+        }
+        this.beingProccessed.delete(messageId);
+    };
+}
+```
+
 ---
 
 ## Some suggestions for improvements:
 - I think part of the challenge here is that I should be seasoned enough to config the server to run it, which is fair and explains why the `package.json` and `tsconfig.ts` files are absent, but for the sake of completeness my first suggestion would be to add them by default so that we can get up and running quicker. (That of course includes the `.gitignore` which we'll need before committing and pushing)
 
+- Using UUID for the message IDs would be a lot better than just `math.random` but since this is a "toy" example, I get why it was choosen, or maybe it's a honeypot that you want the candadiate to catch(similar to the empty `confirm` method in Queue, nice hint BTW ;)) 
+
+- In terms of the queue system, we can add a retry mechanism for the workers, so that they can catch a message as soon as one is available
+    - So instead of breaking/sleeping as we do now, when returning `undefined` in Queue, we can add an async "nextAvailble" that would resolve when a message is ready, or the queue is fully processed
+
+- Semantic and "nitpicky" suggestions:
+    - The naming scheme if we are being pedantic in the Queue service should follow convention, so `enqueue`, `dequeue`, `confirm`, and not `Enqueue` etc..
+    - Using readonly
